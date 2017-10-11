@@ -73,7 +73,7 @@ Templating is a way to modify scripts/files with variables from terraform before
 See demo in web-v1-templating
 
 
-## However, modules do not support "iteration/count"...
+## However, modules do not (yet) support "iteration/count"...
 
 As apparent in the sample above, if we wanted to deploy two webservers, we would need two stanzas with the ec2instance module.  There are some creative hacks out there to work around this using splits and joins and making modules that are specifically designed for multiplexing themselves.  For more information on this limitation, please see the following links...
 
@@ -93,6 +93,8 @@ With terraform, you will generally want to test every modification scenario 3 ti
   - Third (optional) you'll want to deploy to staging.  In some companies, a staging-type environment is a more public-facing type environment which you can do some real-world tests against, and possible have integrators or external contractors test against.
   - Fourth, deploy to production
 When pipelining and fully automating terraform, some people like to make a terraform pipeline "pause" if it detects any changes (aka, the output from terraform plan).  The reason being, that if it detects changes, possibly either someone has manually modified an environment, and you, the deploy-master, should review that change before applying it incase it will cause some downtime or incase someone needs to modify the terraform to add that modification OR this new version of your code requires modifications to your infrastructure.  And the nature of that can cause downtime if not considered carefully.
+
+Depending how agile your "production" environment is (aka, how often they update), often there is a fifth type of integration test.  This is a bit of a unique scenario.  Lets say that your dev environment code and infrastructure always goes from version 1 to 2, then 2 to 3.  If you don't get those apporved and deployed to production, your production might go from version 1 to 10.  Some companies when doing scheduled deploys (such as monthly deploys) will have a "pre-deploy" freeze/task a few days before in which they setup a staging environment at exactly the same version of infrastructure as the live environment currently has, then test the upgrade to the desired/current version.  This helps eliminate odd compatibility issues that will only occur on production because it would be the only environment jumping between more than just incremental versions.
 
 
 ## Terraform best-practices
@@ -176,17 +178,29 @@ terraform {
 Please see demo: vpc-v3-remote-state
 
 
-
-## Shared Variables???
-
-So once thing you may have noticed, that a deployed terraform stack uses variables.  If we have shared state, and if you run the same terraform that I have with different variables, it will probably completely destroy almost every element and re-create it.  This is not cool at all.  This is one of those features that they sell as a "enterprise" or "pro" feature of terraform.  You don't _need_ them, but, you totally do need them.  You generally don't want to commit variables, what a lot of people do (including myself) is have a wrapper or a pre/post terraform script that pushes and pulls the local variables along-side the remote state.  I have a not-yet-open-sourced script or two that does this and automated the whole process.  I will be working in my free time over the next week or two to open source and will recommend/promote its usage to you.
-
-
-
 ## Using an existing stack’s state as an input for another stack
 
 When stacks get extremely large, they get very hard to update, and can become more delicate and you may be less likely to update them for fear of them breaking.  Terraform supports using various data sources, one such data source is a S3 bucket.  And it supports parsing the "state" file that terraform itself pushes.  So, this design allows for you to deploy stacks that cascade dependencies on other stacks.  You can deploy a "VPC" stack that your entire production cluster uses, for example.  And then a completely separate stack for your ECS cluster and various apps on ECS, which reads variables from your VPC stack to know its ID and CIDR and such.  And then a completely separate stack could offer another service that offers some logging and data analytics, and perhaps another that adds a monitoring server/cluster.  A great example here, would be an ELK cluster.  AN ELK cluster inside a VPC is often used by ALL services in the VPC to spit logs into, but you wouldn't want each service trying to deploy/manage that service.  So you use a stack for your ELK cluster, and in all your services, you refer to the ELK cluster's remote state to determine the IP address (for example) of how to reach the servers.
 
+```
+data "terraform_remote_state" "vpc" {
+  backend = "s3"
+  config {
+    bucket = "testing-new-s3-bucket"
+    key    = "terraform"
+    region = "eu-west-1"
+  }
+}
+
+resource "aws_instance" "web" {
+  vpc_id = "${data.terraform_remote_state.vpc.vpc_id}"
+  ...
+}
+```
+
 Please see demo: web-v1-using-shared-remote-state
 
 
+## Shared Variables???
+
+So once thing you may have noticed, that a deployed terraform stack uses variables.  If we have shared state, and if you run the same terraform that I have with different variables, it will probably completely destroy almost every element and re-create it.  This is not cool at all.  This is one of those features that they sell as a "enterprise" or "pro" feature of terraform.  You don't _need_ them, but, you totally do need them.  You generally don't want to commit variables, what a lot of people do (including myself) is have a wrapper or a pre/post terraform script that pushes and pulls the local variables along-side the remote state.  I have a not-yet-open-sourced script or two that does this and automated the whole process.  I will be working in my free time over the next week or two to open source and will recommend/promote its usage to you.
