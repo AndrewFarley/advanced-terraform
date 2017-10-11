@@ -59,7 +59,7 @@ You can locally integrate with other tools such as Ansible to be able to jump in
 ```
 resource "null_resource" "example1" {
   provisioner "local-exec" {
-    command = "ansible-playbook --extra-vars server_ip=${aws_instance.web.public_ip}"
+    command = "ansible-playbook --extra-vars server_ip=${aws_instance.web.public_ip} playbook.yml"
   }
   depends_on = ["${aws_instance.web}"]
 }
