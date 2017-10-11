@@ -13,11 +13,11 @@ The idea and power of terraform is to share the responsibility of some of your o
 
 ## Terraform Security
 
-Terraform just uses the provider's API, in AWS's case, it uses the AWS API via the Go SDK embedded in terraform (well, now in a binary module)
-There are no terraform-specific security aspects to consider or discuss other than keeping in mind that your Terraform will be able to read/modify/update/DESTROY your infrastructure
-Terraform is usually be given a wide-open permissions to AWS and other cloud providers because of the numerous API calls across the board it will need to be able to do its job
-Managing and maintaining a minimalist terraform-specific role is extremely complicated.  For good example of how complicated it is look at the minimalist cloudformation role that was created recently for the Terraform CI/CD stack.  That role "barely" allows software to deploy lambdas, imagine trying to manage/maintain this for your terraform stack.  Almost every change (besides minor tweaks) you made to terraform would require modification to the role.
-Because of this, when CI/CD is implemented, special consideration must be placed on the server(s) that run terraform.  I recommend considering a separate Jenkins runner that is only to be used by Terraform that has an Instance Role that grants full permissions.
+ - Terraform just uses the provider's API, in AWS's case, it uses the AWS API via the Go SDK embedded in terraform (well, now in a binary module)
+ - There are no terraform-specific security aspects to consider or discuss other than keeping in mind that your Terraform will be able to  - read/modify/update/DESTROY your infrastructure
+ - Terraform is usually be given a wide-open permissions to AWS and other cloud providers because of the numerous API calls across the board it will need to be able to do its job
+ - Managing and maintaining a minimalist terraform-specific role is extremely complicated.  For good example of how complicated it is look at the  - minimalist cloudformation role that was created recently for the Terraform CI/CD stack.  That role "barely" allows software to deploy lambdas,  - imagine trying to manage/maintain this for your terraform stack.  Almost every change (besides minor tweaks) you made to terraform would require modification to the role.
+ - Because of this, when CI/CD is implemented, special consideration must be placed on the server(s) that run terraform.  I recommend considering a separate Jenkins runner that is only to be used by Terraform that has an Instance Role that grants full permissions.
 
 
 ## Creating and using Terraform modules, and creating reusable terraform modules
@@ -31,12 +31,12 @@ module_name:
 ```
 Creating reusable modules needs to keep in mind that a user of a module may have one or many of various things, such as security groups.  Often a module will come with some minimalist configuration that sets up basic access, and then lets/makes you implement the rest in your terraform code.  You generally want to think of, and create modules as if they were public and published on your github, so everyone can use them.  Nothing in them should be private, everything in them (where possible) should be configrable, overridable, etc.  When authoring modules, you often start small, and allow for your immediate needs to be overridden.  Then as a module gets more adoption, you add more inputs/outputs as needed.
 
-DEMO, see code, and comments herein
+DEMO, see example vpc-v2, vpc-v3, web-v2, web-v2-multiple
 
 
-## Terraform Gotchas
+## Terraform's big F-U, no `IF` statement!
 
-Terraform doesn't have the concept of conditional statements, meaning, it does not (yet) have "if" or or loop type statements.  It has a very rudimentary count object which allows you to create 0-x number of a specific object, populating that object with different values from a list or map depending on which count it is on, but not all objects support count (only most resources).  This design choice provides a bit of friction and frustration for a typical programmer coming into the terraform world who would prefer to do something like...
+Terraform doesn't have the concept of conditional statements, meaning, it does not (yet) have "if" or or loop type statements.  It has a very rudimentary count object which allows you to create 0-x number of a specific object, populating that object with different values from a list or map depending on which count it is on, but not all objects support count (only most resources).  This design choice provides a bit of getting used to, and it causes friction and frustration for a typical programmer coming into the terraform world who would prefer to do something like...
 ```
 if ($stage = 'dev') {
   # Put terraform code to deploy a ec2 instance as a bastion host here
@@ -64,6 +64,18 @@ resource "null_resource" "example1" {
   depends_on = ["${aws_instance.web}"]
 }
 ```
+**OR**
+```
+resource "aws_instance" "web" {
+  # ...
+  provisioner "remote-exec" {
+    inline = [
+      "puppet apply",
+      "consul join ${aws_instance.web.private_ip}",
+    ]
+  }
+}
+```
 
 
 ## Templating
@@ -75,7 +87,7 @@ See demo in web-v1-templating
 
 ## However, modules do not (yet) support "iteration/count"...
 
-As apparent in the sample above, if we wanted to deploy two webservers, we would need two stanzas with the ec2instance module.  There are some creative hacks out there to work around this using splits and joins and making modules that are specifically designed for multiplexing themselves.  For more information on this limitation, please see the following links...
+As apparent in the sample above, if we wanted to deploy two webservers, we would need two stanzas with the ec2instance module.  There are some creative hacks out there to work around this using splits and joins and making modules that are specifically designed for multiplexing themselves.  For more information on this limitation amd working around it, please see the following links...
 
 https://serialseb.com/blog/2016/05/11/terraform-working-around-no-count-on-module/
 https://github.com/hashicorp/terraform/issues/953
@@ -83,38 +95,52 @@ https://github.com/hashicorp/terraform/issues/953
 And see the codebase example web-v2-multiple
 
 
+## Modification realignment demo
+
+Demo...?
+
+
 ## Terraform Workflow / Pipelining Terraform / CI/CD
 
-The power of infrastructure as code is the ability to pipeline it.  Keep in mind, this isn't just code that you're modifying, it's basically your entire infrastructure.  
-Some project choose to have their terraform code for their service sitting inside their code repository, and utilized automatically by a pipeline.  And yet others choose to keep this code out of a code repository to keep the focus of repositories more focused on a singular task.  This is usually highly dependent on a company's project size, infrastructure, deployment scenarios, etc.
-With terraform, you will generally want to test every modification scenario 3 times.
-  - First, you'll make changes to terraform yourself, as a developer, and run that terraform apply modification to a sandbox type environment, allowing you to iterate quickly and make the necessary infrastructure modifications.
-  - Second, you'll probably commit this and want to run your code through some type of End-To-End (e2e) type environment that does the terraform modifications and then runs a barrage of software/service specific integration tests, to ensure your software and your infrastructure are healthy.  This can be manual or fully automated, but should be fully automated.  This should still be a sandbox type environment, incase of some accidental resource management leakage between stacks (see notes about using proper env/region naming) 
-  - Third (optional) you'll want to deploy to staging.  In some companies, a staging-type environment is a more public-facing type environment which you can do some real-world tests against, and possible have integrators or external contractors test against.
-  - Fourth, deploy to production
-When pipelining and fully automating terraform, some people like to make a terraform pipeline "pause" if it detects any changes (aka, the output from terraform plan).  The reason being, that if it detects changes, possibly either someone has manually modified an environment, and you, the deploy-master, should review that change before applying it incase it will cause some downtime or incase someone needs to modify the terraform to add that modification OR this new version of your code requires modifications to your infrastructure.  And the nature of that can cause downtime if not considered carefully.
+ - The power of infrastructure as code is the ability to pipeline it.  Keep in mind, this isn't just code that you're modifying, it's basically your entire infrastructure.  
+ - Some project choose to have their terraform code for their service sitting inside their code repository, and utilized automatically by a pipeline.  And yet others choose to keep this code out of a code repository to keep the focus of repositories more focused on a singular task.  This is usually highly dependent on a company's project size, infrastructure, deployment scenarios, etc.
+ - With terraform, you will generally want to test every modification scenario 3 times.
+   - First, you'll make changes to terraform yourself, as a developer, and run that terraform apply modification to a sandbox type environment, allowing you to iterate quickly and make the necessary infrastructure modifications.
+   - Second, you'll probably commit this and want to run your code through some type of End-To-End (e2e) type environment that does the terraform modifications and then runs a barrage of software/service specific integration tests, to ensure your software and your infrastructure are healthy.  This can be manual or fully automated, but should be fully automated.  This should still be a sandbox type environment, incase of some accidental resource management leakage between stacks (see notes about using proper env/region naming) 
+   - Third (optional) you'll want to deploy to staging.  In some companies, a staging-type environment is a more public-facing type environment which you can do some real-world tests against, and possible have integrators or external contractors test against.
+   - Fourth (super optional) Depending how agile your "production" environment is (aka, how often they update), often there is another type of integration test.  This is a bit of a unique scenario.  Lets say that your dev environment code and infrastructure always goes from version 1 to 2, then 2 to 3.  If you don't get those apporved and deployed to production, your production might go from version 1 to 10.  Some companies when doing scheduled deploys (such as monthly deploys) will have a "pre-deploy" freeze/task a few days before in which they setup a staging environment at exactly the same version of infrastructure as the live environment currently has, then test the upgrade to the desired/current version.  This helps eliminate odd compatibility issues that will only occur on production because it would be the only environment jumping between more than just incremental versions.
+   - Fifth, deploy to production
+   
+These five deploy scenarios when fully implemented with testing will cover every usage scenario and provide a zero or near-zero downtime experience while leveraging Agile methodologies towards your infrastructure!
 
-Depending how agile your "production" environment is (aka, how often they update), often there is a fifth type of integration test.  This is a bit of a unique scenario.  Lets say that your dev environment code and infrastructure always goes from version 1 to 2, then 2 to 3.  If you don't get those apporved and deployed to production, your production might go from version 1 to 10.  Some companies when doing scheduled deploys (such as monthly deploys) will have a "pre-deploy" freeze/task a few days before in which they setup a staging environment at exactly the same version of infrastructure as the live environment currently has, then test the upgrade to the desired/current version.  This helps eliminate odd compatibility issues that will only occur on production because it would be the only environment jumping between more than just incremental versions.
+**WARNING:** When pipelining and fully automating terraform, some people like to make a terraform pipeline "pause" if it detects any changes (aka, the output from terraform plan).  The reason being, that if it detects changes, possibly either someone has manually modified an environment, and you, the deploy-master, should review that change before applying it incase it will cause some downtime or incase someone needs to modify the terraform to add that modification OR this new version of your code requires modifications to your infrastructure.  And the nature of that can cause downtime if not considered carefully.
+
 
 
 ## Terraform best-practices
 
-All configurable elements should be pulled out into variables.  NEVER hard-code anything.  Terraform has data sources to pull data from just about anywhere.
-All elements should be modularized where possible, making your IaC.
-You pretty much ALWAYS want to run `terraform plan` before running `terraform apply`
-Make sure to TAG all resources that you can, especially helpful for large/shared sandbox environments
-For local/rapid development, local state is fine, but for anything in production, ALWAYS use remote/shared state
-When using S3 as remote state, ALWAYS turn on s3 file versioning.  Incase something "bad" happens and your remote state gets wiped/modified/corrupt.
-Create all resources with names and tags that explain exactly what that resource is for/from.  Common tags include....
-env = std/prd/dev/farley        # The environment name of a resource, good for doing tag-based billing
-Terraform = true                # So someone knows this resource is managed by Terraform
-Owner = farley@olindata.com     # This is so if someone does an audit (Eg: for keeping billing costs down) they know who to ask about a technical resource
-Name = <env>-<service_label>-<unique_id>  # This helps easily see what this object is in the AWS console without having to look at other tags.  Add more data here if desired
-Service = <projectname>         # For a company that runs microservices, or nunmerous projects in a single stack, having unique project/service names helps track down per-project billing and resources
-Warning: CERTAIN resources are global, such as IAM users / IAM profiles / Instance Roles.  When creating resources that are global, you should include the region name in their Name definition.  This helps facilitate a multi-region deployment of your stack without causing conflict.  You generally should be able to deploy a stack multiple times in the same region (with different 'env' names), and then you should be able to deploy to a different region with the same env name as you had in another region.
+ - All configurable elements should be pulled out into variables.  NEVER hard-code anything.  Terraform has data sources to pull data from just about anywhere.
+ - All elements should be modularized where possible, making your IaC.
+ - You pretty much ALWAYS want to run `terraform plan` before running `terraform apply`
+ - Make sure to TAG all resources that you can, especially helpful for large/shared sandbox environments
+ - For local/rapid development, local state is fine, but for anything in production, ALWAYS use remote/shared state
+ - When using S3 as remote state, ALWAYS turn on s3 file versioning.  Incase something "bad" happens and your remote state gets wiped/modified/corrupt.
+ - Create all resources with names and tags that explain exactly what that resource is for/from.  Common tags include....
+   - env = std/prd/dev/farley        # The environment name of a resource, good for doing tag-based billing
+   - Terraform = true                # So someone knows this resource is managed by Terraform
+   - Owner = farley@olindata.com     # This is so if someone does an audit (Eg: for keeping billing costs down) they know who to ask about a technical resource
+   - Name = <env>-<service_label>-<unique_id>  # This helps easily see what this object is in the AWS console without having to look at other tags.  Add more data here if desired
+   - Service = <projectname>         # For a company that runs microservices, or nunmerous projects in a single stack, having unique project/service names helps track down per-project billing and resources
+
+Warning: CERTAIN resources are global, such as IAM users / IAM profiles / Instance Roles.  When creating resources that are global, you should include the region name in their Name definition.  This helps facilitate a multi-region deployment of your stack without causing conflict.  The way to tell if you did this right is...
+ 1. Try to deploy the same stack twice to the same region with a different environment name.
+ 1. Try to deploy the same stack with the same env name to two different regions as you had in another.
+
+This sanity check will ensure the maximum portability of your Terraform code.
 
 Good article to read:
 https://github.com/BWITS/terraform-best-practices
+
 
 
 ## To user-data or not to user-data
@@ -159,10 +185,10 @@ DEMO
 
 ## Shared State
 
-Shared state is a collaborative way to work on a infrastructre/stack together with other developers or other tools.  Every time your terraform modifies anything, it stores that "state" in a remote place.  State storage includes Consul, S3, and others.
-Mentioned above in best-practices, for local/rapid development using local state is fine, but for anything in production, ALWAYS use remote/shared state
-When using S3 as remote state, ALWAYS turn on s3 file versioning.  Incase something "bad" happens and your remote state gets wiped/modified/corrupted.
-It's easy to enable, all you do is define where you want the remote state stored, then run `terraform init`.
+ - Shared state is a collaborative way to work on a infrastructre/stack together with other developers or other tools.  Every time your terraform modifies anything, it stores that "state" in a remote place.  State storage includes Consul, S3, and others.
+ - Mentioned above in best-practices, for local/rapid development using local state is fine, but for anything in production, ALWAYS use remote/shared state
+ - When using S3 as remote state, ALWAYS turn on s3 file versioning.  Incase something "bad" happens and your remote state gets wiped/modified/corrupted.
+ - It's easy to enable, all you do is define where you want the remote state stored, then run `terraform init`.
 
 Example remote config:
 ```
